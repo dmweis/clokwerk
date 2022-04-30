@@ -1,6 +1,6 @@
-use std::{fmt, future::Future, pin::Pin};
-
 use chrono::{DateTime, Local, TimeZone};
+use std::{fmt, future::Future, pin::Pin};
+use uuid::Uuid;
 
 use crate::{
     job::Job,
@@ -10,6 +10,17 @@ use crate::{
 };
 
 pub type JobFuture = Box<dyn Future<Output = ()> + Send + 'static>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobId(Uuid);
+
+impl JobId {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
 /// An asynchronous job to run on the scheduler.
 /// Create these by calling [`AsyncScheduler::every()`](crate::AsyncScheduler::every).
 ///
@@ -21,6 +32,7 @@ where
 {
     schedule: JobSchedule<Tz, Tp>,
     job: Option<Box<dyn GiveMeAPinnedFuture + Send>>,
+    id: JobId,
 }
 
 trait GiveMeAPinnedFuture {
@@ -95,7 +107,12 @@ where
         AsyncJob {
             schedule: JobSchedule::new(ival, tz),
             job: None,
+            id: JobId::new(),
         }
+    }
+
+    pub fn id(&self) -> JobId {
+        self.id
     }
 
     /// Specify a task to run, and schedule its next run

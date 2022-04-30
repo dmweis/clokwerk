@@ -1,5 +1,6 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, task::Poll};
 
+use crate::async_job::JobId;
 use crate::AsyncJob;
 use crate::Interval;
 use crate::{
@@ -177,6 +178,10 @@ where
         &mut self.jobs[last_index]
     }
 
+    pub fn remove_job(&mut self, id: JobId) {
+        self.jobs.retain(|job| job.id() != id);
+    }
+
     /// Run all jobs that should run at this time.
     ///
     /// This method returns a future that will poll each of the tasks until they are completed.
@@ -253,5 +258,98 @@ impl Future for AsyncSchedulerFuture {
         } else {
             Poll::Pending
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{AsyncScheduler, Job, TimeUnits};
+    use std::sync::{atomic::*, Arc};
+
+    macro_rules! make_time_provider {
+        ($name:ident : $($time:literal),+) => {
+            #[derive(Debug)]
+            struct $name {}
+            static TIMES_TIME_REQUESTED: once_cell::sync::Lazy<AtomicU32> = once_cell::sync::Lazy::new(|| AtomicU32::new(0));
+            impl TimeProvider for $name {
+                fn now<Tz>(tz: &Tz) -> chrono::DateTime<Tz>
+                where
+                    Tz: chrono::TimeZone + Sync + Send,
+                    {
+                        let times = [$(chrono::DateTime::parse_from_rfc3339($time).unwrap()),+];
+                        let idx = TIMES_TIME_REQUESTED.fetch_add(1, Ordering::SeqCst) as usize;
+                        times[idx].with_timezone(&tz)
+                    }
+            }
+        };
+    }
+
+    #[tokio::test]
+    async fn async_test_every_plus() {
+        make_time_provider!(FakeTimeProvider :
+            "2019-10-22T12:40:00Z",
+            "2019-10-22T12:40:00Z",
+            "2019-10-22T12:50:20Z",
+            "2019-10-22T12:50:30Z"
+        );
+        let mut scheduler =
+            AsyncScheduler::with_tz_and_provider::<chrono::Utc, FakeTimeProvider>(chrono::Utc);
+        let times_called = Arc::new(AtomicU32::new(0));
+        {
+            let times_called = times_called.clone();
+            scheduler
+                .every(10.minutes())
+                .plus(5.seconds())
+                .run(move || {
+                    let times_called = times_called.clone();
+                    async move {
+                        times_called.fetch_add(1, Ordering::SeqCst);
+                    }
+                });
+        }
+        assert_eq!(1, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+        scheduler.run_pending().await;
+        assert_eq!(0, times_called.load(Ordering::SeqCst));
+        assert_eq!(2, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+        scheduler.run_pending().await;
+        assert_eq!(1, times_called.load(Ordering::SeqCst));
+        assert_eq!(3, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+        scheduler.run_pending().await;
+        assert_eq!(1, times_called.load(Ordering::SeqCst));
+        assert_eq!(4, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn async_test_id() {
+        make_time_provider!(FakeTimeProvider :
+            "2019-10-22T12:30:00Z",
+            "2019-10-22T12:40:00Z",
+            "2019-10-22T12:50:00Z"
+        );
+        let mut scheduler =
+            AsyncScheduler::with_tz_and_provider::<chrono::Utc, FakeTimeProvider>(chrono::Utc);
+        let times_called = Arc::new(AtomicU32::new(0));
+        let id = {
+            let times_called = times_called.clone();
+            let id = scheduler
+                .every(10.minutes())
+                .run(move || {
+                    let times_called = times_called.clone();
+                    async move {
+                        times_called.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+                .id();
+            id
+        };
+        assert_eq!(1, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+        scheduler.run_pending().await;
+        assert_eq!(2, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+        assert_eq!(1, times_called.load(Ordering::SeqCst));
+        scheduler.remove_job(id);
+        scheduler.run_pending().await;
+        assert_eq!(3, TIMES_TIME_REQUESTED.load(Ordering::SeqCst));
+        assert_eq!(1, times_called.load(Ordering::SeqCst));
     }
 }

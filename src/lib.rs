@@ -31,6 +31,6 @@ pub use crate::scheduler::{ScheduleHandle, Scheduler};
 pub use crate::sync_job::SyncJob;
 
 #[cfg(feature = "async")]
-pub use crate::async_job::AsyncJob;
+pub use crate::async_job::{AsyncJob, JobId};
 #[cfg(feature = "async")]
 pub use crate::async_scheduler::AsyncScheduler;

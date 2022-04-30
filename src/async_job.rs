@@ -11,6 +11,11 @@ use crate::{
 
 pub type JobFuture = Box<dyn Future<Output = ()> + Send + 'static>;
 
+#[cfg(feature = "serialize")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct JobId(Uuid);
+
+#[cfg(not(feature = "serialize"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JobId(Uuid);
 
